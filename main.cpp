@@ -52,6 +52,10 @@ float FlightLoop(float inElapsedSinceLastCall, float inElapsedTimeSinceLastFligh
 	FlightData.msl = XPLMGetDataf(FlightData.mslRef) * 3.2808399; // Convert to ft
 	FlightData.gndSpeed = XPLMGetDataf(FlightData.gndSpeedRef) * 1.94384449; // Convert to knots
 	FlightData.airSpeed = XPLMGetDataf(FlightData.airSpeedRef); // Knots
+	FlightData.vvi = XPLMGetDataf(FlightData.vviRef); // ft/m
+
+	AutopilotData.altitude = XPLMGetDataf(AutopilotData.altitudeRef);
+	AutopilotData.heading = XPLMGetDataf(AutopilotData.headingRef);
 
 #ifdef DEBUG
 	char out[32];
@@ -76,11 +80,14 @@ float FlightLoop(float inElapsedSinceLastCall, float inElapsedTimeSinceLastFligh
 				XPRCDat.curState = (XPRC_STATE)(XPRCDat.curState + 1);
 			}
 			hc.Erase();
+
+			XPRCDat.changingValue = false;
+			XPRCDat.cValueIdx = 0;
 		}
 	}
 
 	// Send information
-	char hcBuff[24];
+	char hcBuff[50];
 	switch (XPRCDat.curState) {
 	case INIT:
 		XPRCDat.curState = SQUAWK;
@@ -89,20 +96,100 @@ float FlightLoop(float inElapsedSinceLastCall, float inElapsedTimeSinceLastFligh
 		hc.WriteAt("Radio TODO", 0, 0);
 		break;
 	case AUTO_PILOT:
-		sprintf(hcBuff, "Hdg: %d %s", 0, ("DISABLED"));
+		if (!input.empty()) {
+			switch (input[0]) {
+			case ';': // Switch what AP parameter we want to edit
+				if (AutopilotData.editSelector == 3) {
+					AutopilotData.editSelector = 0;
+				}
+				else {
+					AutopilotData.editSelector++;
+				}
+				break;
+			case 'C': // +
+				if (AutopilotData.editSelector == 0) {
+					XPLMSetDataf(AutopilotData.headingRef, ++AutopilotData.heading);
+				}
+				else if (AutopilotData.editSelector == 1) {
+					XPLMSetDataf(AutopilotData.altitudeRef, ++AutopilotData.altitude);
+				}
+				break;
+			case 'D': // -
+				if (AutopilotData.editSelector == 0) {
+					XPLMSetDataf(AutopilotData.headingRef, --AutopilotData.heading);
+				}
+				else if (AutopilotData.editSelector == 1) {
+					XPLMSetDataf(AutopilotData.altitudeRef, --AutopilotData.altitude);
+				}
+				break;
+			case 'G': // Enter new value
+				if (XPRCDat.changingValue == false) {
+					XPRCDat.changingValue = true;
+					hc.SetLED(0, QTermII::LEDState::Blinking);
+					
+					if (AutopilotData.editSelector == 0) {
+						char buff[10];
+						sprintf(buff, "%03.0f", AutopilotData.heading);
+						XPRCDat.tempBuff = std::string(buff);
+					}
+					else if (AutopilotData.editSelector == 1) {
+						char buff[10];
+						sprintf(buff, "%06d", (int)AutopilotData.altitude);
+						XPRCDat.tempBuff = std::string(buff);
+					}
+				}
+				else {
+					XPRCDat.changingValue = false;
+					XPRCDat.cValueIdx = 0;
+					hc.SetLED(0, QTermII::LEDState::Off);
+				}
+				break;
+			default:
+				try {
+					if (XPRCDat.changingValue) {
+						std::atoi(input.c_str()); // We don't care about the value - just using this to rougly check for int value
+						XPRCDat.tempBuff[XPRCDat.cValueIdx] = input.c_str()[0];
+
+						if (AutopilotData.editSelector == 0) {
+							XPLMSetDataf(AutopilotData.headingRef, std::atoi(XPRCDat.tempBuff.c_str()));
+							XPLMDebugString(XPRCDat.tempBuff.append("\n").c_str());
+							if (XPRCDat.cValueIdx++ == 2) {
+								hc.SetLED(0, QTermII::LEDState::Off);
+								XPRCDat.changingValue = false;
+								XPRCDat.cValueIdx = 0;
+							}
+						}
+						else if (AutopilotData.editSelector == 1) {
+							XPLMSetDataf(AutopilotData.altitudeRef, std::atoi(XPRCDat.tempBuff.c_str()));
+							if (XPRCDat.cValueIdx++ == 4) {
+								hc.SetLED(0, QTermII::LEDState::Off);
+								XPRCDat.changingValue = false;
+								XPRCDat.cValueIdx = 0;
+							}
+						}
+					}
+				}
+				catch (std::exception err) {
+					XPLMDebugString(err.what());
+				}
+				break;
+			}
+		}
+
+		sprintf(hcBuff, "Hdg:%c%03.0f", (AutopilotData.editSelector == 0 ? '>' : ' '), AutopilotData.heading);
 		hc.WriteAt(hcBuff, 0, 0);
 
-		sprintf(hcBuff, "Alt: %d %s", 0, ("DISABLED"));
+		sprintf(hcBuff, "Alt:%c%03.0fft", (AutopilotData.editSelector == 1 ? '>' : ' '), AutopilotData.altitude);
 		hc.WriteAt(hcBuff, 1, 0);
 		break;
 	case FLIGHT_DISPLAY:
 		sprintf(hcBuff, "ASpd: %dkts", (int)FlightData.airSpeed);
 		hc.WriteAt(hcBuff, 0, 0);
 
-		sprintf(hcBuff, "GSpd: %d", (int)FlightData.gndSpeed);
+		sprintf(hcBuff, "GSpd: %dkts", (int)FlightData.gndSpeed);
 		hc.WriteAt(hcBuff, 1, 0);
 
-		sprintf(hcBuff, "AGL: %dft", (int)FlightData.agl);
+		sprintf(hcBuff, "AGL: %dft VVI: %d ft/m", (int)FlightData.vvi);
 		hc.WriteAt(hcBuff, 2, 0);
 
 		sprintf(hcBuff, "MSL: %dft", (int)FlightData.msl);
@@ -156,7 +243,7 @@ float FlightLoop(float inElapsedSinceLastCall, float inElapsedTimeSinceLastFligh
 											(RadioData.transponderMode == Off ? "OFF" : "TXMT"),
 											(RadioData.transponderId == true ? 'T' : ' '));
 		hc.WriteAt(hcBuff, 0, 0);
-
+		
 		if (RadioData.transponderId) {
 			hc.SetLED(4, QTermII::LEDState::On);
 		}
@@ -187,6 +274,10 @@ PLUGIN_API int XPluginStart(char* outName, char* outSig, char* outDesc) {
 	FlightData.mslRef = XPLMFindDataRef("sim/flightmodel/position/elevation"); // Meters
 	FlightData.airSpeedRef = XPLMFindDataRef("sim/cockpit2/gauges/indicators/airspeed_kts_pilot"); // Knots
 	FlightData.gndSpeedRef = XPLMFindDataRef("sim/flightmodel/position/groundspeed"); // Meters
+	FlightData.vviRef = XPLMFindDataRef("sim/cockpit2/gauges/indicators/vvi_fpm_pilot"); // ft/m
+
+	AutopilotData.headingRef = XPLMFindDataRef("sim/cockpit2/autopilot/heading_dial_deg_mag_pilot");
+	AutopilotData.altitudeRef = XPLMFindDataRef("sim/cockpit2/autopilot/altitude_dial_ft");
 
 	// Make our serial connection
 	hc.Connect();

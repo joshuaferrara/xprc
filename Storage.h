@@ -24,7 +24,20 @@ struct {
 } XPRCDat;
 
 struct {
+	XPLMDataRef modeRef;
+	XPLMDataRef headingModeRef;
+	XPLMDataRef altitudeModeRef;
+
+	XPLMDataRef altitudeRef;
+	XPLMDataRef headingRef;
+
+	int mode;
+	int headingMode;
+	int altitudeMode;
 	float altitude;
+	float heading;
+
+	int editSelector = 0; // Index of AP parameter we want to edit.
 } AutopilotData;
 
 struct {
@@ -32,11 +45,13 @@ struct {
 	XPLMDataRef gndSpeedRef;
 	XPLMDataRef aglRef;
 	XPLMDataRef mslRef;
+	XPLMDataRef vviRef;
 
 	float airSpeed;
 	float gndSpeed;
 	float agl;
 	float msl;
+	float vvi;
 } FlightData;
 
 struct {
